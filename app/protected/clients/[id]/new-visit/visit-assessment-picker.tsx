@@ -234,7 +234,42 @@ router.refresh();
     setIsSaving(false);
   }
 }
+const handleUpdateAssessment = async (finding: SavedFinding) => {
+  const form = document.getElementById(
+    `edit-assessment-${finding.id}`
+  ) as HTMLFormElement | null;
 
+  if (!form) {
+    setUpdateMessage("Could not find assessment form.");
+    return;
+  }
+
+  setIsUpdating(true);
+  setUpdateMessage("");
+
+  try {
+    const formData = new FormData(form);
+
+    formData.set("finding_id", finding.id);
+    formData.set("test_id", finding.test_id);
+
+    const result = await updateVisitAssessment(formData);
+
+    if (!result?.success) {
+      throw new Error("Could not update assessment.");
+    }
+
+    setUpdateMessage("✓ Assessment updated");
+    setEditingFindingId(null);
+
+    router.refresh();
+  } catch (error) {
+    console.error(error);
+    setUpdateMessage("Could not update assessment.");
+  } finally {
+    setIsUpdating(false);
+  }
+};
   return (
     <section className="rounded-2xl border border-sky-200 bg-sky-50 p-5">
 

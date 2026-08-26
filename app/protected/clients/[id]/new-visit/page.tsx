@@ -158,6 +158,22 @@ const { data: savedSessionFindings, error: savedSessionFindingsError } =
 if (savedSessionFindingsError) {
   throw new Error(savedSessionFindingsError.message);
 }
+const normalizedSavedSessionFindings = (savedSessionFindings ?? []).flatMap(
+  (finding) => {
+    const clinicalTest = Array.isArray(finding.clinical_test_library)
+      ? finding.clinical_test_library[0]
+      : finding.clinical_test_library;
+
+    if (!clinicalTest) return [];
+
+    return [
+      {
+        ...finding,
+        clinical_test_library: clinicalTest,
+      },
+    ];
+  }
+);
 
 const { data: clinicalFindings } = await supabase
   .from("clinical_findings")
@@ -399,7 +415,7 @@ const { data: clinicalTests } = await supabase
   clientId={id}
   visitNumber={currentVisitNumber}
   visitSessionId={visitSessionId}
-  savedFindings={savedSessionFindings ?? []}
+  savedFindings={normalizedSavedSessionFindings}
 />
 </div>
           {/* SOAPIE FORM */}

@@ -223,7 +223,7 @@ const { data: openVisitSession } = await supabase
     className="rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white hover:bg-emerald-800"
   >
     {openVisitSession
-      ? `Resume Visit #${openVisitSession.visit_number}`
+      ? `Resume Visit #${openVisitSession?.visit_number}`
       : "+ New Visit"}
   </Link>
 
@@ -750,7 +750,7 @@ const { data: openVisitSession } = await supabase
   ? `Visit #${finding.visits.visit_number}`
   : finding.visit_session_id &&
     openVisitSession?.id === finding.visit_session_id
-  ? `Draft Visit #${openVisitSession.visit_number}`
+  ? `Draft Visit #${openVisitSession?.visit_number}`
   : "Not linked to a visit"}
                                   </p>
 

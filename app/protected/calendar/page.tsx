@@ -129,6 +129,13 @@ export default async function CalendarPage({
         { ascending: true }
       );
 
+      const normalizedAppointments = (appointments ?? []).map((appointment) => ({
+  ...appointment,
+  clients: Array.isArray(appointment.clients)
+    ? appointment.clients[0] ?? null
+    : appointment.clients,
+}));
+
   return (
     <main className="min-h-screen w-full overflow-x-hidden bg-slate-50">
   <div className="mx-auto w-full min-w-0 max-w-[1500px] px-4 py-8 md:px-6">
@@ -156,7 +163,7 @@ export default async function CalendarPage({
 
         <CalendarClient
   clients={clients ?? []}
-  appointments={appointments ?? []}
+  appointments={normalizedAppointments}
   weekStart={dateToYMD(weekStart)}
   initialClientId={params.client ?? ""}
   initialDate={params.date ?? ""}
