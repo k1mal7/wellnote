@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { logAuditEvent } from "@/lib/audit-log";
 
 export async function saveVisit(formData: FormData) {
   const supabase = await createClient();
@@ -222,6 +223,16 @@ const { error: completeSessionError } = await supabase
 if (completeSessionError) {
   throw new Error(completeSessionError.message);
 }
+
+await logAuditEvent({
+  action: "visit_saved",
+  entityType: "visit",
+  entityId: newVisit.id,
+  clientId,
+  details: {
+    visitNumber,
+  },
+});
 
 redirect(
   `/protected/clients/${clientId}/visit-saved?visit=${newVisit.id}`
