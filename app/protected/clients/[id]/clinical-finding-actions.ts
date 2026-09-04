@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { logAuditEvent } from "@/lib/audit-log";
 
 export async function saveClinicalFindings(formData: FormData) {
   const supabase = await createClient();
@@ -57,6 +58,13 @@ export async function saveClinicalFindings(formData: FormData) {
     console.error(error);
     throw new Error(error.message);
   }
-
+await logAuditEvent({
+  action: "assessment_saved",
+  entityType: "clinical_findings",
+  clientId,
+  details: {
+    numberOfFindings: rows.length,
+  },
+});
   revalidatePath(`/protected/clients/${clientId}`);
 }

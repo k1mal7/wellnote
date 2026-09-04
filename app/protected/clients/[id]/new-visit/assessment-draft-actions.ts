@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-
+import { logAuditEvent } from "@/lib/audit-log";
 export async function saveVisitAssessments(
   formData: FormData
 ) {
@@ -96,7 +96,15 @@ export async function saveVisitAssessments(
   if (error) {
     throw new Error(error.message);
   }
-
+await logAuditEvent({
+  action: "assessment_saved",
+  entityType: "clinical_findings",
+  clientId,
+  details: {
+    numberOfFindings: rows.length,
+    visitSessionId: visitSessionId || null,
+  },
+});
   return {
     success: true,
     count: rows.length,
@@ -146,21 +154,29 @@ export async function updateVisitAssessment(
     );
   }
 
-  const { error } = await supabase
-    .from("clinical_findings")
-    .update({
-      right_value:
-        rightValue || singleValue || null,
-      left_value:
-        leftValue || null,
-      notes: notes || null,
-    })
-    .eq("id", findingId)
-    .eq("user_id", user.id);
+  const { data: updatedFinding, error } = await supabase
+  .from("clinical_findings")
+  .update({
+    right_value:
+      rightValue || singleValue || null,
+    left_value:
+      leftValue || null,
+    notes: notes || null,
+  })
+  .eq("id", findingId)
+  .eq("user_id", user.id)
+  .select("id, client_id")
+  .single();
 
   if (error) {
     throw new Error(error.message);
   }
+await logAuditEvent({
+  action: "assessment_updated",
+  entityType: "clinical_finding",
+  entityId: updatedFinding.id,
+  clientId: updatedFinding.client_id,
+});
 
   return {
     success: true,
