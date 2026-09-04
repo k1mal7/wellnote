@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { logAuditEvent } from "@/lib/audit-log";
 
 export async function archiveClient(formData: FormData) {
   const supabase = await createClient();
@@ -28,6 +29,11 @@ export async function archiveClient(formData: FormData) {
     console.error(error);
     throw new Error(error.message);
   }
-
+await logAuditEvent({
+  action: "client_archived",
+  entityType: "client",
+  entityId: clientId,
+  clientId,
+});
   redirect("/protected");
 }
