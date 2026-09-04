@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
+import { logAuditEvent } from "@/lib/audit-log";
 
 function dateFromYMD(value: string) {
   const [year, month, day] = value.split("-").map(Number);
@@ -191,15 +192,32 @@ export async function addAppointment(formData: FormData) {
     });
   }
 
-  const { error } =
-    await supabase
-      .from("appointments")
-      .insert(rows);
+  const { data: createdAppointments, error } =
+  await supabase
+    .from("appointments")
+    .insert(rows)
+    .select("id, client_id");
 
   if (error) {
     console.error(error);
     throw new Error(error.message);
   }
+
+  await logAuditEvent({
+  action: "appointment_created",
+  entityType: "appointment",
+  entityId:
+    createdAppointments?.length === 1
+      ? createdAppointments[0].id
+      : null,
+  clientId:
+    createdAppointments?.[0]?.client_id || null,
+  details: {
+    numberOfAppointments:
+      createdAppointments?.length || rows.length,
+    recurring,
+  },
+});
 
   revalidatePath("/protected/calendar");
 }
@@ -239,20 +257,35 @@ export async function updateAppointmentStatus(
     );
   }
 
-  const { error } =
-    await supabase
-      .from("appointments")
-      .update({ status })
-      .eq("id", appointmentId)
-      .eq("user_id", user.id);
+  const { data: updatedAppointment, error } =
+  await supabase
+    .from("appointments")
+    .update({ status })
+    .eq("id", appointmentId)
+    .eq("user_id", user.id)
+    .select("id, client_id")
+    .single();
 
   if (error) {
     throw new Error(
       error.message
     );
   }
+ 
+  await logAuditEvent({
+  action:
+    status === "Cancelled"
+      ? "appointment_cancelled"
+      : "appointment_updated",
+  entityType: "appointment",
+  entityId: updatedAppointment.id,
+  clientId: updatedAppointment.client_id,
+  details: {
+    status,
+  },
+});
 
-  revalidatePath(
+revalidatePath(
     "/protected/calendar"
   );
 }
