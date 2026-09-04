@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { logAuditEvent } from "@/lib/audit-log";
 
 export async function saveVisitDraft(
   formData: FormData
@@ -34,7 +35,7 @@ export async function saveVisitDraft(
 
      visit_title:
   String(formData.get("visit_title") || ""),
-     
+
       subjective:
         String(formData.get("subjective") || ""),
 
@@ -118,6 +119,13 @@ export async function discardVisitDraft(
   if (sessionError) {
     throw new Error(sessionError.message);
   }
+
+  await logAuditEvent({
+  action: "visit_draft_discarded",
+  entityType: "visit_session",
+  entityId: sessionId,
+  clientId,
+});
 revalidatePath(`/protected/clients/${clientId}`);
 revalidatePath("/protected");
 
