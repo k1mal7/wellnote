@@ -27,7 +27,7 @@ export default async function ArchivedClientsPage() {
       <div className="mx-auto max-w-5xl px-6 py-10">
 
         <Link
-          href="/protected"
+          href="/protected/clients"
           className="mb-6 inline-block text-sm font-semibold text-emerald-700"
         >
           ← Back to active clients

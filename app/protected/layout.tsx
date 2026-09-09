@@ -1,32 +1,29 @@
 import { AuthButton } from "@/components/auth-button";
-import Link from "next/link";
 import { Suspense } from "react";
+import ProtectedNavigation from "./protected-navigation";
+import { createClient } from "@/lib/supabase/server";
 
-export default function ProtectedLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+async function WorkspaceNavigation() {
+  const supabase = await createClient();
+  const { data: { user }, error } = await supabase.auth.getUser();
+  const metadata = !error && user ? user.user_metadata : {};
+  const name = [metadata.first_name, metadata.full_name, metadata.name, metadata.display_name]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim();
+
+  return <ProtectedNavigation workspaceLabel={name ? `${name}’s workspace` : "Your workspace"} />;
+}
+
+export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3 md:px-5">
-          <Link
-            href="/protected"
-            className="text-lg font-bold text-emerald-800"
-          >
-            WellNote
-          </Link>
-
-          <Suspense>
-            <AuthButton />
-          </Suspense>
+    <div className="min-h-screen bg-slate-50 text-slate-900 lg:pl-60">
+      <Suspense><WorkspaceNavigation /></Suspense>
+      <header className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-end gap-3 text-sm [&>div]:flex-wrap">
+          <Suspense><AuthButton /></Suspense>
         </div>
       </header>
-
-      <div className="mx-auto w-full min-w-0 max-w-5xl px-4 py-5 md:px-5">
-        {children}
-      </div>
-    </main>
+      <div className="mx-auto w-full min-w-0 max-w-7xl">{children}</div>
+    </div>
   );
 }

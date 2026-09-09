@@ -62,10 +62,11 @@ export default async function CalendarPage({
 
   const {
     data: { user },
+    error: authError,
   } =
     await supabase.auth.getUser();
 
-  if (!user) {
+  if (authError || !user) {
     redirect("/auth/login");
   }
 
@@ -80,16 +81,17 @@ export default async function CalendarPage({
   const weekEnd =
     addDays(weekStart, 6);
 
-  const { data: clients } =
+  const { data: clients, error: clientsError } =
     await supabase
       .from("clients")
       .select(
         "id, first_name, last_name"
       )
+      .eq("user_id", user.id)
       .eq("archived", false)
       .order("first_name");
 
-  const { data: appointments } =
+  const { data: appointments, error: appointmentsError } =
     await supabase
       .from("appointments")
       .select(`
@@ -112,6 +114,8 @@ export default async function CalendarPage({
           last_name
         )
       `)
+      .eq("user_id", user.id)
+      .eq("clients.user_id", user.id)
       .gte(
         "appointment_date",
         dateToYMD(weekStart)
@@ -128,6 +132,17 @@ export default async function CalendarPage({
         "start_time",
         { ascending: true }
       );
+
+  const { data: openDrafts, error: draftsError } = await supabase
+    .from("visit_sessions")
+    .select("client_id, visit_number")
+    .eq("user_id", user.id)
+    .eq("status", "open")
+    .order("created_at", { ascending: false });
+
+  if (clientsError || appointmentsError || draftsError) {
+    return <main className="px-6 py-10"><h1 className="text-3xl font-bold">Calendar unavailable</h1><p className="mt-3 text-slate-600">We couldn’t load your schedule. Please refresh to try again.</p></main>;
+  }
 
       const normalizedAppointments = (appointments ?? []).map((appointment) => ({
   ...appointment,
@@ -162,6 +177,8 @@ export default async function CalendarPage({
         </div>
 
         <CalendarClient
+  key={dateToYMD(weekStart)}
+  openDrafts={openDrafts ?? []}
   clients={clients ?? []}
   appointments={normalizedAppointments}
   weekStart={dateToYMD(weekStart)}

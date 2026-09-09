@@ -1,478 +1,88 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
-import { addClient } from "./actions";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { ArrowRight, CalendarDays, FilePenLine, Users } from "lucide-react";
 
 export const instant = false;
 
-function formatNextVisitDate(date: string, time: string) {
-  const visitDate = new Date(`${date}T12:00:00`);
-
-  const dateText = visitDate.toLocaleDateString("en-CA", {
-    month: "short",
-    day: "numeric",
-  });
-
-  const [hourText, minute] = time.split(":");
-
-  let hour = Number(hourText);
-
-  const period = hour >= 12 ? "PM" : "AM";
-
-  hour = hour % 12 || 12;
-
-  return `${dateText} at ${hour}:${minute} ${period}`;
-}
-export default async function ProtectedPage({
-  searchParams,
-}: {
-  searchParams: Promise<{
-    addClient?: string;
-  }>;
+export default async function DashboardPage({ searchParams }: {
+  searchParams: Promise<{ addClient?: string }>;
 }) {
-
- const resolvedSearchParams = await searchParams;
-
-const showAddClient =
-  resolvedSearchParams.addClient === "true";
-  
-  
+  if ((await searchParams).addClient === "true") redirect("/protected/clients?addClient=true");
   const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) redirect("/auth/login");
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth/login");
+  // Use the clinic's current timezone for the day boundary.
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const [clientResult, appointmentResult, draftResult] = await Promise.all([
+    supabase.from("clients")
+      .select("id, first_name, last_name, archived, visits(created_at)")
+      .eq("user_id", user.id)
+      .eq("visits.user_id", user.id)
+      .order("created_at", { ascending: false })
+      .order("created_at", { referencedTable: "visits", ascending: false })
+      .limit(1, { referencedTable: "visits" }),
+    supabase.from("appointments").select("id, client_id, start_time, end_time").eq("user_id", user.id).eq("event_category", "Client").eq("status", "Scheduled").eq("appointment_date", today).order("start_time"),
+    supabase.from("visit_sessions").select("id, client_id, visit_number, updated_at").eq("user_id", user.id).eq("status", "open").order("updated_at", { ascending: false }),
+  ]);
+  if (clientResult.error || appointmentResult.error || draftResult.error) {
+    return <main className="px-6 py-10"><h1 className="text-3xl font-bold">Dashboard unavailable</h1><p className="mt-3 text-slate-600">We couldn’t load your workspace. Please refresh to try again.</p><Link href="/protected/clients" className="mt-5 inline-block font-semibold text-emerald-700">Go to clients →</Link></main>;
   }
+  const clients = clientResult.data ?? [];
+  const clientMap = new Map(clients.map(client => [client.id, client]));
+  const activeClients = clients.filter(client => !client.archived);
+  const appointments = (appointmentResult.data ?? []).filter(item => clientMap.has(item.client_id));
+  const drafts = (draftResult.data ?? []).filter(item => clientMap.has(item.client_id));
+  // Rank clinical activity first; retain creation order for clients without activity.
+  const latestActivity = new Map<string, number>();
+  for (const client of activeClients) {
+    const savedAt = client.visits?.[0]?.created_at;
+    if (savedAt) latestActivity.set(client.id, Date.parse(savedAt) || 0);
+  }
+  for (const draft of drafts) {
+    const updatedAt = Date.parse(draft.updated_at ?? "") || 0;
+    latestActivity.set(draft.client_id, Math.max(latestActivity.get(draft.client_id) ?? 0, updatedAt));
+  }
+  const recentClients = [...activeClients]
+    .sort((a, b) => (latestActivity.get(b.id) ?? 0) - (latestActivity.get(a.id) ?? 0))
+    .slice(0, 6);
 
-  const { data: clients } = await supabase
-  .from("clients")
-  .select("*")
-  .eq("archived", false)
-  .order("created_at", { ascending: false });
-const today = new Date().toISOString().slice(0, 10);
-
-const { data: upcomingAppointments } = await supabase
-  .from("appointments")
-  .select(`
-    id,
-    client_id,
-    appointment_date,
-    start_time,
-    status
-  `)
-  .eq("event_category", "Client")
-  .gte("appointment_date", today)
-  .eq("status", "Scheduled")
-  .order("appointment_date", { ascending: true })
-  .order("start_time", { ascending: true });
-  
-const { data: latestVisits } = await supabase
-  .from("visits")
-  .select("client_id, visit_number, visit_date")
-  .order("visit_date", { ascending: false })
-  .order("visit_number", { ascending: false });
- 
- const currentMonth = new Date().toISOString().slice(0, 7);
-
-const { data: visitsThisMonth } = await supabase
-  .from("visits")
-  .select("id, visit_date")
-  .gte("visit_date", `${currentMonth}-01`)
-  .lt(
-    "visit_date",
-    new Date(
-      new Date().getFullYear(),
-      new Date().getMonth() + 1,
-      1
-    )
-      .toISOString()
-      .slice(0, 10)
-  );
-  
-const activeClientCount = clients?.length ?? 0;
-
-const visitsThisMonthCount =
-  visitsThisMonth?.length ?? 0;
-
-const upcomingVisitCount =
-  upcomingAppointments?.length ?? 0;
-
-const { data: openVisitSessions } = await supabase
-  .from("visit_sessions")
-  .select("id, client_id, visit_number, updated_at")
-  .eq("user_id", user.id)
-  .eq("status", "open")
-  .order("created_at", { ascending: false });
-
+  const name = (id: string) => {
+    const client = clientMap.get(id);
+    return `${client?.first_name ?? ""} ${client?.last_name ?? ""}`.trim();
+  };
+  const dateLabel = new Date(`${today}T12:00:00`).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" });
+  const cards = [
+    { label: "Appointments today", value: appointments.length, icon: CalendarDays, href: "/protected/calendar" },
+    { label: "Draft visits", value: drafts.length, icon: FilePenLine, href: "#draft-visits" },
+    { label: "Clients", value: activeClients.length, icon: Users, href: "/protected/clients" },
+  ];
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-
-        {/* Header */}
-<div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-  <div>
-    <h1 className="text-4xl font-bold text-slate-900">
-      WellNote
-    </h1>
-
-    <p className="mt-2 text-slate-500">
-      Health & fitness client charting
-    </p>
-  </div>
-
-  <div className="flex flex-wrap items-center gap-2">
-    <Link
-      href="/protected/calendar"
-      className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-    >
-      Calendar
-    </Link>
-
-    <Link
-      href="/protected/archived"
-      className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-    >
-      Archived Clients
-    </Link>
-
-    <div className="rounded-full bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-      Signed in
-    </div>
-  </div>
-</div>
-
-        {/* Dashboard cards */}
-        <div className="grid gap-4 sm:grid-cols-3">
-
-  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <p className="text-sm font-medium text-slate-500">
-      Active Clients
-    </p>
-
-    <p className="mt-2 text-2xl font-bold text-slate-900">
-      {activeClientCount}
-    </p>
-  </div>
-
-  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <p className="text-sm font-medium text-slate-500">
-      Visits This Month
-    </p>
-
-    <p className="mt-2 text-2xl font-bold text-slate-900">
-      {visitsThisMonthCount}
-    </p>
-  </div>
-
-  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <p className="text-sm font-medium text-slate-500">
-      Upcoming Visits
-    </p>
-
-    <p className="mt-2 text-2xl font-bold text-slate-900">
-      {upcomingVisitCount}
-    </p>
-  </div>
-
-</div>
-
-    {/* CLIENT AREA */}
-<div className="mt-8">
-
-  {/* CLIENT HEADING */}
-  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-
-    <div>
-      <h2 className="text-2xl font-semibold text-slate-900">
-        Clients
-      </h2>
-
-      <p className="mt-1 text-sm text-slate-500">
-        Your active client charts
-      </p>
-    </div>
-
-    {!showAddClient && (
-      <Link
-        href="/protected?addClient=true"
-        className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
-      >
-        + Add Client
-      </Link>
-    )}
-
-  </div>
-
-  {/* ADD CLIENT FORM */}
-  {showAddClient && (
-    <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-      <div className="flex flex-wrap items-start justify-between gap-4">
-
-        <div>
-          <h2 className="text-xl font-semibold text-slate-900">
-            Add Client
-          </h2>
-
-          <p className="mt-1 text-sm text-slate-500">
-            Create a new client chart.
-          </p>
-        </div>
-
-        <Link
-          href="/protected"
-          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-        >
-          Cancel
-        </Link>
-
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div><p className="text-base font-semibold text-emerald-700 sm:text-lg">{dateLabel}</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Today</h1><p className="mt-2 text-slate-500">Everything ready to pick up where you left off.</p></div>
+        <Link href="/protected/clients?addClient=true" className="rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-800">+ Add client</Link>
       </div>
-
-      <form
-        action={addClient}
-        className="mt-6 space-y-5"
-      >
-
-        <div className="grid gap-4 md:grid-cols-2">
-
-          <div>
-            <label className="mb-1 block text-sm font-semibold text-slate-700">
-              First Name
-            </label>
-
-            <input
-              type="text"
-              name="first_name"
-              required
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-semibold text-slate-700">
-              Last Name
-            </label>
-
-            <input
-              type="text"
-              name="last_name"
-              required
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-semibold text-slate-700">
-              Date of Birth
-            </label>
-
-            <input
-              type="date"
-              name="date_of_birth"
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 [color-scheme:light]"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-semibold text-slate-700">
-              Phone
-            </label>
-
-            <input
-              type="text"
-              name="phone"
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900"
-            />
-          </div>
-
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-semibold text-slate-700">
-            Goals
-          </label>
-
-          <textarea
-            name="goals"
-            rows={3}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-semibold text-slate-700">
-            Precautions
-          </label>
-
-          <textarea
-            name="precautions"
-            rows={3}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900"
-          />
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            className="rounded-xl bg-emerald-700 px-6 py-3 font-semibold text-white hover:bg-emerald-800"
-          >
-            Add Client
-          </button>
-        </div>
-
-      </form>
-
-    </section>
-  )}
-
-  {/* CLIENT LIST */}
-  <div className="space-y-4">
-
-    {clients && clients.length > 0 ? (
-      <>
-        {clients.map((client) => {
-
-          const nextAppointment =
-            upcomingAppointments?.find(
-              (appointment) =>
-                appointment.client_id === client.id
-            );
-
-          const lastVisit =
-            latestVisits?.find(
-              (visit) =>
-                visit.client_id === client.id
-            );
-
-          const openVisitSession = openVisitSessions?.find(
-  (session) => session.client_id === client.id
-);
-
-          return (
-            <div
-              key={client.id}
-              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-            >
-
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-
-                <div>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    {client.first_name} {client.last_name}
-                  </h3>
-
-                  <p className="mt-1 text-sm text-slate-500">
-                    {client.date_of_birth
-                      ? `DOB: ${client.date_of_birth}`
-                      : "No DOB entered"}
-                  </p>
-
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-
-                <div className="flex flex-wrap items-center gap-2">
-  <Link
-    href={`/protected/clients/${client.id}/new-visit`}
-    className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
-  >
-    {openVisitSession
-      ? `Resume Visit #${openVisitSession.visit_number}`
-      : "+ New Visit"}
-  </Link>
-
-  {openVisitSession && (
-    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
-      Draft in progress
-    </span>
-  )}
-</div> 
-
-                  <Link
-                    href={`/protected/clients/${client.id}`}
-                    className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
-                  >
-                    Open Chart
-                  </Link>
-
-                </div>
-
-              </div>
-
-              <div className="mt-5 grid gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
-
-                <div>
-
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Next Visit
-                  </p>
-
-                  <p
-                    className={`mt-1 font-semibold ${
-                      nextAppointment
-                        ? "text-emerald-700"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    {nextAppointment
-                      ? formatNextVisitDate(
-                          nextAppointment.appointment_date,
-                          nextAppointment.start_time
-                        )
-                      : "Not scheduled"}
-                  </p>
-
-                </div>
-
-                <div>
-
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Last Visit
-                  </p>
-
-                  <p className="mt-1 font-semibold text-slate-800">
-                    {lastVisit
-                      ? `Visit #${lastVisit.visit_number} · ${new Date(
-                          `${lastVisit.visit_date}T12:00:00`
-                        ).toLocaleDateString("en-CA", {
-                          month: "short",
-                          day: "numeric",
-                        })}`
-                      : "No visits yet"}
-                  </p>
-
-                </div>
-
-              </div>
-
-            </div>
-          );
-        })}
-      </>
-    ) : (
-
-      <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
-
-        <p className="font-semibold text-slate-700">
-          No clients yet
-        </p>
-
-        <p className="mt-1 text-sm text-slate-500">
-          Add your first client to get started.
-        </p>
-
+      <div className="mb-8 grid gap-4 sm:grid-cols-3">
+        {cards.map(({ label, value, icon: Icon, href }) => <Link key={label} href={href} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-emerald-300"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium text-slate-500">{label}</p><Icon size={20} className="text-emerald-700" aria-hidden="true" /></div><p className="mt-2 text-2xl font-semibold">{value}</p></Link>)}
       </div>
-
-    )}
-
-  </div>
-
-</div>    
+      <div className="grid items-start gap-6 xl:grid-cols-2">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Today’s appointments</h2><Link href={`/protected/calendar?week=${today}`} className="text-sm font-semibold text-emerald-700">View calendar →</Link></div>
+          {appointments.length ? <ul className="divide-y divide-slate-100">{appointments.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><p className="font-semibold">{name(item.client_id)}</p><p className="mt-1 text-sm text-slate-500">{item.start_time.slice(0, 5)}{item.end_time ? ` – ${item.end_time.slice(0, 5)}` : ""}</p></div><Link href={`/protected/clients/${item.client_id}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50">Open chart</Link></li>)}</ul> : <p className="rounded-xl bg-slate-50 p-6 text-sm text-slate-500">No client appointments scheduled today.</p>}
+        </section>
+        <section id="draft-visits" className={`rounded-2xl border bg-white p-5 sm:p-6 ${drafts.length ? "border-amber-300" : "border-slate-200"}`}>
+          <h2 className="text-xl font-semibold">Resume draft visits</h2><p className="mb-4 mt-1 text-sm text-slate-500">Continue your saved notes and assessments.</p>
+          {drafts.length ? <ul className="divide-y divide-slate-100">{drafts.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><p className="font-semibold">{name(item.client_id)}</p><p className="mt-1 text-sm text-slate-500">Visit #{item.visit_number}{clientMap.get(item.client_id)?.archived ? " · Archived client" : ""}</p></div><Link prefetch={false} href={`/protected/clients/${item.client_id}/new-visit`} className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">Resume visit →</Link></li>)}</ul> : <p className="rounded-xl bg-slate-50 p-6 text-sm text-slate-500">You’re all caught up. No unfinished visits.</p>}
+        </section>
       </div>
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="mb-5 flex items-center justify-between gap-3"><h2 className="text-xl font-semibold">Recent clients</h2><Link href="/protected/clients" className="text-sm font-semibold text-emerald-700">All clients →</Link></div>
+        {activeClients.length ? <div className="grid gap-3 md:grid-cols-2">{recentClients.map(client => <Link key={client.id} href={`/protected/clients/${client.id}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 p-4 text-sm font-semibold hover:bg-slate-50">{name(client.id)}<ArrowRight size={16} className="shrink-0 text-emerald-700" aria-hidden="true" /></Link>)}</div> : <p className="text-sm text-slate-500">Add your first client to start charting.</p>}
+      </section>
     </main>
   );
 }

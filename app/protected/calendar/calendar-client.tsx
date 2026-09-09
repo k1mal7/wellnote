@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import CalendarEventDialog from "./calendar-event-dialog";
+import { layoutCalendarEvents } from "./calendar-event-layout";
 
 import {
   addAppointment,
@@ -38,6 +40,7 @@ type Appointment = {
 };
 
 type Props = {
+  openDrafts: { client_id: string; visit_number: number }[];
   clients: Client[];
   appointments: Appointment[];
   weekStart: string;
@@ -295,6 +298,7 @@ if (
 
 export default function CalendarClient({
   clients,
+  openDrafts,
   appointments,
   weekStart,
   initialClientId = "",
@@ -343,13 +347,12 @@ export default function CalendarClient({
   const [formOpen, setFormOpen] =
   useState(Boolean(initialClientId));
 
-  const [
-    selectedAppointment,
-    setSelectedAppointment,
-  ] =
-    useState<Appointment | null>(
-      null
-    );
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
+  const selectedAppointment = appointments.find(item => item.id === selectedAppointmentId) ?? null;
+  const selectedDraft = openDrafts.find(draft => draft.client_id === selectedAppointment?.client_id);
+  const [agendaDate, setAgendaDate] = useState(
+    today >= weekStart && today <= dateToYMD(weekEnd) ? today : weekStart
+  );
 
   const [
     eventCategory,
@@ -404,7 +407,7 @@ const [
 
 
   function openBlankForm() {
-    setSelectedAppointment(null);
+    setSelectedAppointmentId(null);
 
     setEventCategory("Client");
 
@@ -429,7 +432,7 @@ setEventDate(today);
     date: string,
     hour: number
   ) {
-    setSelectedAppointment(null);
+    setSelectedAppointmentId(null);
 
     setEventDate(date);
 
@@ -508,61 +511,14 @@ setEventDate(today);
 
   return (
     <>
-      {/* WEEK CONTROLS */}
-
-     <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4">
-
-  <div className="text-center">
-    <h2 className="text-xl font-semibold text-slate-900">
-      {formatWeekTitle(start, weekEnd)}
-    </h2>
-
-    <Link
-      href={`/protected/calendar?week=${today}`}
-      className="mt-1 inline-block text-sm font-semibold text-emerald-700"
-    >
-      Go to today
-    </Link>
-  </div>
-
-  <div className="mt-4 flex items-center justify-between gap-3">
-    <Link
-      href={`/protected/calendar?week=${previousWeek}`}
-      className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-100"
-    >
-      ← Previous
-    </Link>
-
-    <Link
-      href={`/protected/calendar?week=${nextWeek}`}
-      className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-100"
-    >
-      Next →
-    </Link>
-  </div>
-
-</div> 
-
-      {/* ADD BUTTON */}
-
-      <div className="mb-6">
-
-        <button
-          type="button"
-          onClick={
-            openBlankForm
-          }
-          className="rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white hover:bg-emerald-800"
-        >
-          + Add Event
-        </button>
-
-        <p className="mt-2 text-sm text-slate-500">
-          You can also click directly
-          on any empty time slot in
-          the calendar.
-        </p>
-
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="text-lg font-semibold text-slate-900">{formatWeekTitle(start, weekEnd)}</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link aria-label="Previous week" href={`/protected/calendar?week=${previousWeek}`} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50">← Previous</Link>
+          <Link href={`/protected/calendar?week=${today}`} onClick={() => setAgendaDate(today)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50">Today</Link>
+          <Link aria-label="Next week" href={`/protected/calendar?week=${nextWeek}`} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50">Next →</Link>
+          <button type="button" onClick={openBlankForm} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">+ Add Event</button>
+        </div>
       </div>
 
       {/* ADD EVENT FORM */}
@@ -1024,7 +980,8 @@ onChange={(event) =>
       {/* SELECTED APPOINTMENT */}
 
       {selectedAppointment && (
-        <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <CalendarEventDialog onClose={() => setSelectedAppointmentId(null)}>
+        <section className="p-6">
 
           <div className="flex flex-wrap items-start justify-between gap-4">
 
@@ -1034,7 +991,7 @@ onChange={(event) =>
                 Calendar Event
               </p>
 
-              <h2 className="mt-1 text-2xl font-bold text-slate-900">
+              <h2 id="calendar-event-title" className="mt-1 break-words text-2xl font-bold text-slate-900">
                 {selectedAppointment.event_category ===
                 "Client"
                   ? `${selectedAppointment.clients?.first_name ?? ""} ${selectedAppointment.clients?.last_name ?? ""}`
@@ -1082,9 +1039,7 @@ onChange={(event) =>
             <button
               type="button"
               onClick={() =>
-                setSelectedAppointment(
-                  null
-                )
+                setSelectedAppointmentId(null)
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600"
             >
@@ -1108,10 +1063,11 @@ onChange={(event) =>
                   </Link>
 
                   <Link
+                    prefetch={false}
                     href={`/protected/clients/${selectedAppointment.client_id}/new-visit`}
                     className="rounded-xl bg-emerald-700 px-4 py-2 font-semibold text-white"
                   >
-                    Start New Visit
+                    {selectedDraft ? `Resume Visit #${selectedDraft.visit_number}` : "Start New Visit"}
                   </Link>
 
                 </div>
@@ -1223,11 +1179,33 @@ onChange={(event) =>
             )}
 
         </section>
+        </CalendarEventDialog>
       )}
+
+      <section aria-label="Daily agenda" className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 md:hidden">
+        <label htmlFor="agenda-day" className="mb-2 block text-sm font-semibold">Day agenda</label>
+        <select id="agenda-day" value={agendaDate} onChange={event => setAgendaDate(event.target.value)} className="mb-4 w-full rounded-xl border border-slate-300 bg-white px-3 py-3">
+          {weekDays.map(day => <option key={dateToYMD(day)} value={dateToYMD(day)}>{formatDay(day)}{dateToYMD(day) === today ? " · Today" : ""}</option>)}
+        </select>
+        {appointments.some(item => item.appointment_date === agendaDate) ? (
+          <ul className="space-y-3">
+            {appointments.filter(item => item.appointment_date === agendaDate).map(appointment => (
+              <li key={appointment.id}>
+                <button type="button" onClick={() => { setFormOpen(false); setSelectedAppointmentId(appointment.id); }} className={`w-full rounded-xl border p-4 text-left ${getEventClasses(appointment)}`}>
+                  <p className="font-semibold break-words">{appointment.event_category === "Client" ? `${appointment.clients?.first_name ?? ""} ${appointment.clients?.last_name ?? ""}` : appointment.title || appointment.event_category}</p>
+                  <p className="mt-1 text-sm">{formatTime(appointment.start_time)} – {formatTime(getEndTime(appointment))}</p>
+                  <p className="mt-1 text-xs font-semibold">{appointment.status} · {appointment.event_category}</p>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="rounded-xl bg-slate-50 p-5 text-sm text-slate-500">No events scheduled for this day.</p>}
+        <button type="button" onClick={() => openSlot(agendaDate, 9)} className="mt-4 text-sm font-semibold text-emerald-700">+ Add event on this day</button>
+      </section>
 
       {/* CALENDAR */}
 
-      <section className="w-full max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <section className="hidden w-full max-w-full overflow-hidden md:block rounded-2xl border border-slate-200 bg-white">
 
         <div className="w-full max-w-full overflow-x-auto">
 
@@ -1338,6 +1316,10 @@ onChange={(event) =>
                         date
                     );
 
+                  const eventLayout = layoutCalendarEvents(dayAppointments.map(appointment => ({
+                    id: appointment.id, ...getPosition(appointment),
+                  })));
+
                   return (
                     <div
                       key={date}
@@ -1426,22 +1408,16 @@ onChange={(event) =>
                                   false
                                 );
 
-                                setSelectedAppointment(
-                                  appointment
-                                );
-
-                                window.scrollTo(
-                                  {
-                                    top: 0,
-                                    behavior:
-                                      "smooth",
-                                  }
-                                );
+                                setSelectedAppointmentId(appointment.id);
                               }}
-                              className={`absolute left-1 right-1 z-10 overflow-hidden rounded-lg border p-2 text-left text-xs shadow-sm transition hover:brightness-95 ${getEventClasses(
+                              aria-label={`${displayName}, ${formatTime(appointment.start_time)}–${formatTime(getEndTime(appointment))}, ${appointment.status}`}
+                              title={`${displayName} · ${formatTime(appointment.start_time)}–${formatTime(getEndTime(appointment))}`}
+                              className={`absolute z-10 overflow-hidden rounded-lg border p-2 text-left text-xs shadow-sm transition hover:brightness-95 ${getEventClasses(
                                 appointment
                               )}`}
                               style={{
+                                left: `calc(${(eventLayout.get(appointment.id)!.column / eventLayout.get(appointment.id)!.columns) * 100}% + 2px)`,
+                                width: `calc(${100 / eventLayout.get(appointment.id)!.columns}% - 4px)`,
                                 top:
                                   position.top,
                                 height:

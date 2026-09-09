@@ -173,7 +173,7 @@ const { data: openVisitSession } = await supabase
 
         {/* Back */}
         <Link
-          href="/protected"
+          href="/protected/clients"
           className="mb-6 inline-block text-sm font-semibold text-emerald-700 hover:text-emerald-800"
         >
           ← Back to clients
