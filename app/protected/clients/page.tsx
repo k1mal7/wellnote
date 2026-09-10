@@ -1,3 +1,4 @@
+import ClientHoldBadge from "@/components/client-hold-badge";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { addClient } from "../actions";
@@ -29,6 +30,7 @@ export default async function ProtectedPage({
   searchParams: Promise<{
     addClient?: string;
     q?: string;
+    status?: string;
   }>;
 }) {
 
@@ -92,8 +94,10 @@ const { data: openVisitSessions, error: sessionsError } = await supabase
   }
 
   const query = (resolvedSearchParams.q ?? "").trim().toLowerCase();
+  const status = ["active", "on-hold"].includes(resolvedSearchParams.status ?? "") ? resolvedSearchParams.status : "all";
   const filteredClients = clients?.filter((client) =>
-    `${client.first_name} ${client.last_name}`.toLowerCase().includes(query)
+    `${client.first_name} ${client.last_name}`.toLowerCase().includes(query) &&
+    (status === "all" || (status === "on-hold" ? client.on_hold : !client.on_hold))
   );
 
   return (
@@ -249,9 +253,11 @@ const { data: openVisitSessions, error: sessionsError } = await supabase
     </section>
   )}
 
-  <form action="/protected/clients" className="mb-6 flex gap-2">
+  <form action="/protected/clients" className="mb-6 flex flex-wrap gap-2">
     <label htmlFor="client-search" className="sr-only">Search clients by name</label>
     <input id="client-search" name="q" defaultValue={resolvedSearchParams.q ?? ""} placeholder="Search clients by name…" className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3" />
+    <label htmlFor="client-status" className="sr-only">Client status</label>
+    <select id="client-status" name="status" defaultValue={status} className="rounded-xl border border-slate-300 bg-white px-3 py-2"><option value="all">All clients</option><option value="active">Active</option><option value="on-hold">On hold</option></select>
     <button className="rounded-xl bg-emerald-700 px-4 py-2 font-semibold text-white hover:bg-emerald-800">Search</button>
   </form>
   {/* CLIENT LIST */}
@@ -290,6 +296,7 @@ const { data: openVisitSessions, error: sessionsError } = await supabase
                   <h3 className="text-lg font-semibold text-slate-900">
                     {client.first_name} {client.last_name}
                   </h3>
+                  {client.on_hold && <div className="mt-2"><ClientHoldBadge /></div>}
 
                   <p className="mt-1 text-sm text-slate-500">
                     {client.date_of_birth
@@ -385,11 +392,11 @@ const { data: openVisitSessions, error: sessionsError } = await supabase
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
 
         <p className="font-semibold text-slate-700">
-          {query ? "No matching clients" : "No clients yet"}
+          {(query || status !== "all") ? "No matching clients" : "No clients yet"}
         </p>
 
         <p className="mt-1 text-sm text-slate-500">
-          {query ? "Try a different name." : "Add your first client to get started."}
+          {(query || status !== "all") ? "Try a different name or status filter." : "Add your first client to get started."}
         </p>
 
       </div>

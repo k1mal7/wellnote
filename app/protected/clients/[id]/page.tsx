@@ -1,3 +1,5 @@
+import ClientHoldBadge from "@/components/client-hold-badge";
+import ClientHoldControls from "./client-hold-controls";
 import ClinicalFindingsClient from "./clinical-findings-client";
 import { addAssessment } from "./assessment-actions";
 import { archiveClient } from "./client-actions";
@@ -167,6 +169,11 @@ const { data: openVisitSession } = await supabase
   .limit(1)
   .maybeSingle();
 
+  const { count: upcomingCount, error: upcomingError } = await supabase
+    .from("appointments").select("id", { count: "exact", head: true })
+    .eq("user_id", user.id).eq("client_id", id).eq("status", "Scheduled")
+    .gte("appointment_date", new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto" }).format(new Date()));
+
   return (
     <main className="min-h-screen bg-slate-50">
       <div className="mx-auto max-w-6xl px-6 py-10">
@@ -186,6 +193,7 @@ const { data: openVisitSession } = await supabase
     <h1 className="text-4xl font-bold text-slate-900">
       {client.first_name} {client.last_name}
     </h1>
+    {client.on_hold && <div className="mt-2"><ClientHoldBadge /></div>}
 
     <p className="mt-2 text-slate-500">
       {age !== null ? `${age} years old · ` : ""}
@@ -236,6 +244,8 @@ const { data: openVisitSession } = await supabase
   </div>
 
 </div>
+
+        {!client.archived && typeof client.on_hold === "boolean" && <ClientHoldControls clientId={id} onHold={client.on_hold} returnDate={client.hold_return_date ?? null} upcomingCount={upcomingError ? null : upcomingCount ?? 0} />}
 
         {/* Tabs */}
         <div className="mb-8 flex flex-wrap gap-2">
