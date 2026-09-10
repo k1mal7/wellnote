@@ -1,3 +1,4 @@
+import ClientHoldBadge from "@/components/client-hold-badge";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -19,7 +20,7 @@ export default async function DashboardPage({ searchParams }: {
   }).format(new Date());
   const [clientResult, appointmentResult, draftResult] = await Promise.all([
     supabase.from("clients")
-      .select("id, first_name, last_name, archived, visits(created_at)")
+      .select("id, first_name, last_name, archived, on_hold, visits(created_at)")
       .eq("user_id", user.id)
       .eq("visits.user_id", user.id)
       .order("created_at", { ascending: false })
@@ -81,7 +82,7 @@ export default async function DashboardPage({ searchParams }: {
       </div>
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
         <div className="mb-5 flex items-center justify-between gap-3"><h2 className="text-xl font-semibold">Recent clients</h2><Link href="/protected/clients" className="text-sm font-semibold text-emerald-700">All clients →</Link></div>
-        {activeClients.length ? <div className="grid gap-3 md:grid-cols-2">{recentClients.map(client => <Link key={client.id} href={`/protected/clients/${client.id}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 p-4 text-sm font-semibold hover:bg-slate-50">{name(client.id)}<ArrowRight size={16} className="shrink-0 text-emerald-700" aria-hidden="true" /></Link>)}</div> : <p className="text-sm text-slate-500">Add your first client to start charting.</p>}
+        {activeClients.length ? <div className="grid gap-3 md:grid-cols-2">{recentClients.map(client => <Link key={client.id} href={`/protected/clients/${client.id}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 p-4 text-sm font-semibold hover:bg-slate-50"><span className="flex min-w-0 flex-wrap items-center gap-2"><span className="break-words">{name(client.id)}</span>{client.on_hold && <ClientHoldBadge />}</span><ArrowRight size={16} className="shrink-0 text-emerald-700" aria-hidden="true" /></Link>)}</div> : <p className="text-sm text-slate-500">Add your first client to start charting.</p>}
       </section>
     </main>
   );
