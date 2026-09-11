@@ -1,7 +1,7 @@
+import ClientOverview, { snapshotDate, snapshotTime } from "./client-overview";
 import ClientHoldBadge from "@/components/client-hold-badge";
 import ClientHoldControls from "./client-hold-controls";
 import ClinicalFindingsClient from "./clinical-findings-client";
-import { addAssessment } from "./assessment-actions";
 import { archiveClient } from "./client-actions";
 import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
@@ -56,15 +56,17 @@ export default async function ClientPage({
   searchParams,
 }: ClientPageProps) {
   const { id } = await params;
-  const { tab = "overview" } = await searchParams;
+  const { tab: requestedTab = "overview" } = await searchParams;
+  const tab = ["overview", "visits", "assessments", "progress", "documents", "exercises", "profile"].includes(requestedTab) ? requestedTab : "overview";
 
   const supabase = await createClient();
 
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!user) {
+  if (authError || !user) {
     redirect("/auth/login");
   }
 
@@ -74,6 +76,7 @@ export default async function ClientPage({
     .from("clients")
     .select("*")
     .eq("id", id)
+    .eq("user_id", user.id)
     .single();
 
   if (clientError || !client) {
@@ -81,36 +84,34 @@ export default async function ClientPage({
   }
 
   // Get visits belonging to this client
-  const { data: visits } = await supabase
+  const { data: visits, error: visitsError } = await supabase
     .from("visits")
     .select("*")
     .eq("client_id", id)
+    .eq("user_id", user.id)
     .order("visit_number", { ascending: false });
 
   // Get documents belonging to this client
-  const { data: documents } = await supabase
+  const { data: documents, error: documentsError } = await supabase
     .from("documents")
     .select("*")
     .eq("client_id", id)
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
-const { data: assessments } = await supabase
-  .from("assessments")
-  .select("*")
-  .eq("client_id", id)
-  .order("assessment_date", { ascending: false });
   const age = getAge(client.date_of_birth);
-const { data: clinicalTests } = await supabase
+const { data: clinicalTests, error: testsError } = await supabase
   .from("clinical_test_library")
   .select("*")
   .order("category")
   .order("body_region")
   .order("test_name");
-const { data: clinicalFindingHistory } = await supabase
+const { data: rawFindingHistory, error: findingsError } = await supabase
   .from("clinical_findings")
   .select(`
     id,
     test_id,
     finding_date,
+    created_at,
     right_value,
     left_value,
     notes,
@@ -132,10 +133,17 @@ const { data: clinicalFindingHistory } = await supabase
     )
   `)
   .eq("client_id", id)
+    .eq("user_id", user.id)
   .order("finding_date", { ascending: false })
   .order("created_at", { ascending: false });  
-  const latestVisit =
-    visits && visits.length > 0 ? visits[0] : null;
+  const clinicalFindingHistory = (rawFindingHistory ?? []).map(finding => ({
+    ...finding,
+    clinical_test_library: Array.isArray(finding.clinical_test_library) ? finding.clinical_test_library[0] ?? null : finding.clinical_test_library,
+    visits: Array.isArray(finding.visits) ? finding.visits[0] ?? null : finding.visits,
+  }));
+  const latestVisit = [...(visits ?? [])].sort((a, b) =>
+    String(b.visit_date).localeCompare(String(a.visit_date)) || b.visit_number - a.visit_number
+  )[0] ?? null;
 const tabs = [
   {
     name: "Overview",
@@ -149,17 +157,18 @@ const tabs = [
     name: "Assessments",
     value: "assessments",
   },
+  { name: "Progress", value: "progress" },
   {
-    name: "Documents / Evaluations",
+    name: "Documents",
     value: "documents",
   },
   {
-    name: "Profile",
-    value: "profile",
+    name: "Exercises",
+    value: "exercises",
   },
 ];
 
-const { data: openVisitSession } = await supabase
+const { data: openVisitSession, error: sessionError } = await supabase
   .from("visit_sessions")
   .select("id, visit_number, updated_at")
   .eq("user_id", user.id)
@@ -169,10 +178,19 @@ const { data: openVisitSession } = await supabase
   .limit(1)
   .maybeSingle();
 
-  const { count: upcomingCount, error: upcomingError } = await supabase
-    .from("appointments").select("id", { count: "exact", head: true })
-    .eq("user_id", user.id).eq("client_id", id).eq("status", "Scheduled")
-    .gte("appointment_date", new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto" }).format(new Date()));
+  const now = new Date();
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  const currentTime = new Intl.DateTimeFormat("en-GB", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(now);
+  const { data: upcomingAppointments, count: upcomingCount, error: upcomingError } = await supabase
+    .from("appointments").select("id, appointment_date, start_time, appointment_type, status", { count: "exact" })
+    .eq("user_id", user.id).eq("client_id", id).eq("event_category", "Client").eq("status", "Scheduled")
+    .or(`appointment_date.gt.${today},and(appointment_date.eq.${today},start_time.gte.${currentTime})`)
+    .order("appointment_date").order("start_time").limit(1);
+  const nextAppointment = upcomingAppointments?.[0] ?? null;
+
+  if (visitsError || documentsError || findingsError || sessionError || (tab === "assessments" && testsError)) {
+    return <main className="px-6 py-10"><h1 className="text-2xl font-bold">Client chart unavailable</h1><p className="mt-3 text-slate-600">Couldn’t load the chart. Please refresh to try again.</p><Link href="/protected/clients" className="mt-4 inline-block text-emerald-700">Back to clients</Link></main>;
+  }
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -190,22 +208,26 @@ const { data: openVisitSession } = await supabase
 <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
   <div>
-    <h1 className="text-4xl font-bold text-slate-900">
+    <h1 className="text-3xl font-bold text-slate-900">
       {client.first_name} {client.last_name}
     </h1>
-    {client.on_hold && <div className="mt-2"><ClientHoldBadge /></div>}
+    <div className="mt-2">{client.archived ? <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">Archived</span> : client.on_hold ? <ClientHoldBadge /> : <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Active</span>}</div>
 
     <p className="mt-2 text-slate-500">
       {age !== null ? `${age} years old · ` : ""}
       DOB: {formatDate(client.date_of_birth)}
     </p>
+    <p className="mt-2 text-sm text-slate-500">Last visit: {latestVisit ? snapshotDate(latestVisit.visit_date) : "None yet"}</p>
+    <p className="mt-1 text-sm text-slate-500">Next: {upcomingError ? "Unavailable" : nextAppointment ? `${snapshotDate(nextAppointment.appointment_date)} · ${snapshotTime(nextAppointment.start_time)}` : "Not scheduled"}
+    </p>
   </div>
 
-  <div className="flex flex-wrap gap-3">
+  <div className="flex flex-wrap gap-2">
+    <Link href={`/protected/clients/${id}?tab=profile`} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">Client Details</Link>
 
     <Link
       href={`/protected/clients/${id}/edit`}
-      className="rounded-xl border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-700 hover:bg-slate-100"
+      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
     >
       Edit Client
     </Link>
@@ -219,7 +241,7 @@ const { data: openVisitSession } = await supabase
 
       <button
         type="submit"
-        className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 font-semibold text-amber-700 hover:bg-amber-100"
+        className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100"
       >
         Archive Client
       </button>
@@ -227,12 +249,13 @@ const { data: openVisitSession } = await supabase
 
    <div className="flex flex-wrap items-center gap-2">
   <Link
+    prefetch={false}
     href={`/protected/clients/${id}/new-visit`}
-    className="rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white hover:bg-emerald-800"
+    className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
   >
     {openVisitSession
-      ? `Resume Visit #${openVisitSession?.visit_number}`
-      : "+ New Visit"}
+      ? `Resume Draft #${openVisitSession.visit_number}`
+      : "Start Visit"}
   </Link>
 
   {openVisitSession && (
@@ -254,6 +277,7 @@ const { data: openVisitSession } = await supabase
             <Link
               key={item.value}
               href={`/protected/clients/${id}?tab=${item.value}`}
+              aria-current={tab === item.value ? "page" : undefined}
               className={`rounded-full px-4 py-2 text-sm font-semibold ${
                 tab === item.value
                   ? "bg-emerald-700 text-white"
@@ -266,132 +290,9 @@ const { data: openVisitSession } = await supabase
 
         </div>
 
-        {/* OVERVIEW */}
-        {tab === "overview" && (
-          <div className="grid gap-6 lg:grid-cols-2">
-
-            {/* Client snapshot */}
-            <section className="rounded-2xl border bg-white p-6 shadow-sm">
-
-              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-emerald-700">
-                Client Snapshot
-              </p>
-
-              <h2 className="text-2xl font-semibold text-slate-900">
-                Current Profile
-              </h2>
-
-              <div className="mt-6 space-y-6">
-
-                <div>
-                  <p className="mb-1 text-sm font-semibold text-slate-500">
-                    Goals
-                  </p>
-
-                  <p className="leading-relaxed text-slate-800">
-                    {client.goals || "No goals entered yet."}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="mb-1 text-sm font-semibold text-slate-500">
-                    Precautions
-                  </p>
-
-                  <p className="leading-relaxed text-slate-800">
-                    {client.precautions || "No precautions entered yet."}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="mb-1 text-sm font-semibold text-slate-500">
-                    AI Profile Summary
-                  </p>
-
-                  <div className="rounded-xl bg-emerald-50 p-4 text-sm leading-relaxed text-slate-700">
-                    {client.profile_summary ||
-                      "No profile summary yet. Later, WellNote will generate this from the client's initial evaluation PDF."}
-                  </div>
-                </div>
-
-              </div>
-            </section>
-
-            {/* Most recent treatment */}
-            <section className="rounded-2xl border bg-white p-6 shadow-sm">
-
-              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-emerald-700">
-                Recent Treatment
-              </p>
-
-              <h2 className="text-2xl font-semibold text-slate-900">
-                Latest Visit
-              </h2>
-
-              {latestVisit ? (
-                <div className="mt-6 space-y-5">
-
-                  <div>
-                    <p className="text-sm font-semibold text-slate-500">
-                      Visit #{latestVisit.visit_number}
-                    </p>
-
-                    <p className="font-medium text-slate-900">
-                      {formatDate(latestVisit.visit_date)}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="mb-1 text-sm font-semibold text-slate-500">
-                      Assessment
-                    </p>
-
-                    <p className="whitespace-pre-wrap text-slate-800">
-                      {latestVisit.assessment || "No assessment recorded."}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="mb-1 text-sm font-semibold text-slate-500">
-                      Last Intervention
-                    </p>
-
-                    <div className="whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-slate-800">
-                      {latestVisit.intervention ||
-                        "No intervention recorded."}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="mb-1 text-sm font-semibold text-slate-500">
-                      Plan
-                    </p>
-
-                    <p className="whitespace-pre-wrap text-slate-800">
-                      {latestVisit.plan || "No plan recorded."}
-                    </p>
-                  </div>
-
-                </div>
-              ) : (
-                <div className="mt-6 rounded-xl border border-dashed p-8 text-center">
-
-                  <p className="font-semibold text-slate-700">
-                    No visits yet
-                  </p>
-
-                  <p className="mt-2 text-sm text-slate-500">
-                    The client's profile and evaluation will provide context
-                    for the first visit.
-                  </p>
-
-                </div>
-              )}
-
-            </section>
-
-          </div>
-        )}
+        {tab === "overview" && <ClientOverview clientId={id} latestVisit={latestVisit} visits={visits ?? []} findings={clinicalFindingHistory} nextAppointment={nextAppointment} appointmentsError={Boolean(upcomingError)} documentCount={documents?.length ?? 0} />}
+        {tab === "progress" && <section className="rounded-2xl border border-slate-200 bg-white p-6"><h2 className="text-xl font-semibold">Progress</h2><p className="mt-3 text-sm text-slate-500">Full trends and graphs are not available yet. Recent repeated measures appear on Overview.</p><Link href={`/protected/clients/${id}?tab=assessments`} className="mt-4 inline-block text-sm font-semibold text-emerald-700">View assessment history →</Link></section>}
+        {tab === "exercises" && <section className="rounded-2xl border border-slate-200 bg-white p-6"><h2 className="text-xl font-semibold">Exercises</h2><p className="mt-3 text-sm text-slate-500">Exercise programs are not available yet. Interventions remain recorded in saved visits.</p><Link href={`/protected/clients/${id}?tab=visits`} className="mt-4 inline-block text-sm font-semibold text-emerald-700">View saved interventions →</Link></section>}
 
         {/* VISITS */}
         {tab === "visits" && (
@@ -414,13 +315,14 @@ const { data: openVisitSession } = await supabase
     {visits.map((visit) => {
       const visitFindings =
         clinicalFindingHistory?.filter(
-          (finding: any) =>
+          (finding) =>
             finding.visit_id === visit.id
         ) ?? [];
 
       return (
         <div
           key={visit.id}
+          id={`visit-${visit.id}`}
           className="rounded-2xl border p-5"
         >
 
@@ -468,7 +370,7 @@ const { data: openVisitSession } = await supabase
 
                 <div className="space-y-2">
 
-                  {visitFindings.map((finding: any) => {
+                  {visitFindings.map((finding) => {
                     const test =
                       finding.clinical_test_library;
 
@@ -610,7 +512,7 @@ const { data: openVisitSession } = await supabase
       {Array.from(
         new Set(
           clinicalFindingHistory.map(
-            (finding: any) =>
+            (finding) =>
               finding.clinical_test_library?.category
           )
         )
@@ -620,13 +522,13 @@ const { data: openVisitSession } = await supabase
 
           const categoryFindings =
             clinicalFindingHistory.filter(
-              (finding: any) =>
+              (finding) =>
                 finding.clinical_test_library?.category === category
             );
 
           const uniqueTests = Array.from(
             new Map(
-              categoryFindings.map((finding: any) => [
+              categoryFindings.map((finding) => [
                 finding.test_id,
                 finding.clinical_test_library,
               ])
@@ -642,11 +544,12 @@ const { data: openVisitSession } = await supabase
 
               <div className="space-y-2">
 
-                {uniqueTests.map((test: any) => {
+                {uniqueTests.map((test) => {
+                  if (!test) return null;
 
                   const testHistory =
                     categoryFindings.filter(
-                      (finding: any) =>
+                      (finding) =>
                         finding.test_id === test.id
                     );
 
@@ -712,7 +615,7 @@ const { data: openVisitSession } = await supabase
 
                         <div className="space-y-3">
 
-                          {testHistory.map((finding: any) => (
+                          {testHistory.map((finding) => (
 
                             <div
                               key={finding.id}
